@@ -1,17 +1,17 @@
 /*
-  APL Door Sign
+  SpotClockMini
   Reuben Strangelove
-  Feb 2025
+  Oct 2025
 
-  Displays office information with a LED backlight.
+  Displays Gold and Silver spot prices.
 
   MCU:
     ESP32-C3 Super Mini: https://forum.arduino.cc/t/esp32-c3-supermini-pinout/1189850
 
 
-
-  export SPOTCLOCK_WIFI_SSID="REPLACE_WITH_YOUR_SSID"
-  export SPOTCLOCK_WIFI_PASS="REPLACE_WITH_YOUR_PASSWORD"
+  To setup WiFi credentiuals, modify and add the following lines to your .bashrc:
+    export SPOTCLOCK_WIFI_SSID="REPLACE_WITH_YOUR_SSID"
+    export SPOTCLOCK_WIFI_PASS="REPLACE_WITH_YOUR_PASSWORD"
 
   */
 
@@ -131,7 +131,6 @@ void updateValues()
 
 void updateIndicators()
 {
-
   static bool firstEntry{true};
   static Status prevStatus{};
 
@@ -142,6 +141,7 @@ void updateIndicators()
   int radius = 0;
   int h = textHeight + 2 * padding;
 
+  tft.setTextSize(textSize);
   if (prevStatus.wifi != status.wifi || firstEntry)
   {
     prevStatus.wifi = status.wifi;
@@ -152,7 +152,6 @@ void updateIndicators()
     tft.fillRoundRect(x1, y - padding, w1, h, radius, status.wifi ? ST77XX_GREEN : ST77XX_RED);
     tft.setCursor(x1 + padding, y);
     tft.setTextColor(ST77XX_BLACK);
-    tft.setTextSize(textSize);
     tft.print(label1);
   }
 
@@ -189,7 +188,7 @@ void updateIndicators()
     const char *label4 = "FETCH";
     int x4 = 160;
     int w4 = strlen(label4) * 6 * textSize + 2 * padding;
-    tft.fillRoundRect(x4, y - padding, w4, h, radius, status.fetch ? ST77XX_BLUE: ST77XX_WHITE);
+    tft.fillRoundRect(x4, y - padding, w4, h, radius, status.fetch ? ST77XX_BLUE : ST77XX_WHITE);
     tft.setCursor(x4 + padding, y);
     tft.setTextColor(ST77XX_BLACK);
     tft.print(label4);
@@ -211,6 +210,46 @@ void updateIndicators()
   firstEntry = false;
 }
 
+void displayWifiConnectionMessage()
+{
+  tft.fillScreen(ST77XX_BLACK);
+
+  int padding = 5;
+  int textSize = 3;
+  int textHeight = 8 * textSize;
+  int radius = 3;
+  int y = tft.height() / 2 - textHeight / 2;
+  int h = textHeight + 2 * padding;
+
+  tft.setTextSize(textSize);
+
+  const char *label = "Connecting...";
+  int w = strlen(label) * 6 * textSize + 2 * padding;
+  int x = (tft.width() - w) / 2;
+  tft.fillRoundRect(x, y - padding, w, h, radius, ST77XX_YELLOW);
+  tft.setCursor(x + padding, y);
+  tft.setTextColor(ST77XX_BLACK);
+  tft.print(label);
+}
+
+void displayWifiConnectionTick()
+{
+  static bool toggle{false};
+  toggle = !toggle;
+
+  tft.setTextSize(3);
+  tft.setCursor(290, 135);
+  tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+  if (toggle)
+    tft.print("-");
+  else
+    tft.print("+");
+}
+
+void displayClear() {
+    tft.fillScreen(ST77XX_BLACK);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // WiFi
 ///////////////////////////////////////////////////////////////////////////////
@@ -225,24 +264,27 @@ void connectWifi()
   status.wifi = false;
   status.www = false;
   status.api = false;
-  updateIndicators();
+
+  displayWifiConnectionMessage();
 
   WiFi.begin(SPOTCLOCK_WIFI_SSID, SPOTCLOCK_WIFI_PASS);
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED)
   {
-    if (millis() - start > connectionTimeoutMs)
-    {
-      Serial.println("[WiFi] Failed to connect (timeout).");
-      break;
-    }
+    //if (millis() - start > connectionTimeoutMs)
+    //{
+    //  Serial.println("[WiFi] Failed to connect (timeout).");
+    //  break;
+    //}
     Serial.print(".");
+    displayWifiConnectionTick();
     delay(500);
   }
 
   if (WiFi.status() == WL_CONNECTED)
   {
+    displayClear();
     status.wifi = true;
     Serial.println("[WiFi] Connected");
     Serial.print("[WiFi] IP: ");
@@ -286,8 +328,7 @@ void setup()
 
   Serial.println("SpotClock Mini Startup");
 
-  initDisplay();
-  updateIndicators();
+  initDisplay();  
 
   connectWifi();
 
