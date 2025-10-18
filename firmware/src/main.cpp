@@ -22,6 +22,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ESP32Ping.h>
 #include <unordered_map>
 #include <map>
 #include <time.h>
@@ -40,23 +42,21 @@
 #define TFT_CS 0
 #define TFT_RST 1
 #define TFT_DC 2
-
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
+const unsigned long connectionTimeoutMs{30000};
 const unsigned long heartbeatDelayMs{500};
-
 const unsigned long qouteCycleTimeMs{1000};
+const unsigned long apiFetchRateMs{10000};
+const unsigned long pingRateMs{5000};
 
 Status status{};
-
-const unsigned long apiFetchRateSeconds{10};
 
 std::map<Element, Quote> quotes = {
     {Element::AU, {0.0f, 0.0f}},
     {Element::AG, {0.0f, 0.0f}},
     {Element::PT, {0.0f, 0.0f}},
 };
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // General
@@ -123,10 +123,6 @@ void printIndicator(int x, int y, int size, const char *text, int fgColor, int b
   tft.print(text);
 }
 
-void updateDisplayElement(const char *text)
-{
-}
-
 void updateDisplayQuotes()
 {
   static unsigned long start{0};
@@ -142,7 +138,7 @@ void updateDisplayQuotes()
     int w = strlen(elementTextMap.at(element)) * 6 * textSize;
     tft.setTextSize(4);
     tft.setCursor(tft.width() / 2 - w, 10);
-    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     tft.print(elementTextMap.at(element));
 
     char buf[10];
@@ -192,19 +188,19 @@ void updateDisplayIndicators()
   if (prevStatus.www != status.www || firstEntry)
   {
     prevStatus.www = status.www;
-    printIndicator(60, y, textSize, "WWW", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(60, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.api != status.api || firstEntry)
   {
     prevStatus.api = status.api;
-    printIndicator(110, y, textSize, "API", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(110, y, textSize, "API", ST77XX_BLACK, status.api ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.fetch != status.fetch || firstEntry)
   {
     prevStatus.fetch = status.fetch;
-    printIndicator(160, y, textSize, "Fetch", ST77XX_BLACK, status.wifi ? ST77XX_WHITE : ST77XX_BLUE);
+    printIndicator(160, y, textSize, "Fetch", ST77XX_BLACK, status.fetch ? ST77XX_BLUE : ST77XX_WHITE);
   }
 
   if (prevStatus.timestamp != status.timestamp || firstEntry)
@@ -264,8 +260,6 @@ void displayClear()
 
 void connectWifi()
 {
-  const unsigned long connectionTimeoutMs{15000};
-
   Serial.print("[WiFi] Connecting to SSID: ");
   Serial.println(SPOTCLOCK_WIFI_SSID);
 
@@ -280,11 +274,13 @@ void connectWifi()
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED)
   {
-    // if (millis() - start > connectionTimeoutMs)
-    //{
-    //   Serial.println("[WiFi] Failed to connect (timeout).");
-    //   break;
-    // }
+    if (millis() - start > connectionTimeoutMs)
+    {
+      Serial.println("[WiFi] Failed to connect (timeout).");
+      Serial.println("[WiFi] Rebooting ESP32...");
+      delay(3000);
+      ESP.restart();
+    }
     Serial.print(".");
     displayWifiConnectionTick();
     delay(500);
@@ -323,53 +319,95 @@ void checkWifi()
 // API Methods
 ///////////////////////////////////////////////////////////////////////////////
 
-void fetchData()
+void fetchData(Element element)
 {
-  HTTPClient http;
-  String url;
+  WiFiClientSecure client;
+  // client.setInsecure(); // disable cert verification
+  client.setCACert(rootCACert);
+  HTTPClient https;
+  https.setTimeout(8000);
+  String url = apiEndpoints.at(element);
 
-  for (int i = 0; i < static_cast<int>(Element::COUNT); ++i)
+  Serial.printf("[API] Fetching element %s from %s\n", elementTextMap.at(element), url.c_str());
+
+  if (https.begin(client, url))
   {
-    Element element = static_cast<Element>(i);
-
-    Serial.printf("[Api] Fetching quote for %s", elementTextMap.at(element));
-
-    http.begin(apiEndpoints.at(element));
-    int httpCode = http.GET();
-
+    int httpCode = https.GET();
     if (httpCode > 0)
     {
-      Serial.printf("[ApiClient] Response code: %d\n", httpCode);
-      String payload = http.getString();
+      if (httpCode == HTTP_CODE_OK)
+      {
+        status.api = true;
 
-      //  quotes[Element::AU] = {2365.42f, 2350.10f};
+        String payload = https.getString();
+        Serial.println("Response:");
+        Serial.println(payload);
+      }
+      else
+      {
+        Serial.printf("[API] Error, HTTP code: %d\n", httpCode);
+        status.api = false;
+      }
     }
     else
     {
-      Serial.printf("[ApiClient] Request failed, error: %s\n", http.errorToString(httpCode).c_str());
+      Serial.printf("[API] GET failed, error: %s\n", https.errorToString(httpCode).c_str());
+      status.api = false;
     }
 
-    http.end();
+    https.end();
+  }
+  else
+  {
+    status.api = false;
+    Serial.println("[API] Unable to connect");
   }
 }
 
 void processApi()
 {
-  static unsigned long start{millis()};
+  static unsigned long start{0};
+  static Element element{Element::AU};
 
-  if (millis() - start > apiFetchRateSeconds)
+  if (millis() - start > apiFetchRateMs)
   {
     start = millis();
 
     if (WiFi.status() == WL_CONNECTED)
     {
+      element = nextElement(element);
+
       status.fetch = true;
       updateDisplayIndicators();
 
-      fetchData();
+      fetchData(element);
 
       status.fetch = false;
       updateDisplayIndicators();
+    }
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Ping
+///////////////////////////////////////////////////////////////////////////////
+
+void checkWebConnection()
+{
+
+  static unsigned long start{0};
+
+  if (millis() - start > pingRateMs)
+  {
+    start = millis();
+
+    if (Ping.ping("www.google.com"))
+    {
+      status.www = true;
+    }
+    else
+    {
+      status.www = false;
     }
   }
 }
@@ -382,18 +420,14 @@ void setup()
 {
   pinMode(BUILTIN_LED, OUTPUT);
 
+  delay(2000);
   Serial.begin(115200);
-
-  while (!Serial)
-  {
-    ; // wait for serial port to connect. Only during development
-  }
 
   Serial.println("SpotClock Mini Startup");
 
   initDisplay();
 
-  // connectWifi();
+  connectWifi();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -404,7 +438,9 @@ void loop()
 {
   heartbeat();
 
-  // checkWifi();
+  checkWifi();
+
+  checkWebConnection();
 
   processApi();
 
@@ -412,5 +448,5 @@ void loop()
 
   updateDisplayIndicators();
 
-  delay(10);
+  delay(25);
 }
