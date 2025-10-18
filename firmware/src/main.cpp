@@ -177,37 +177,37 @@ void updateDisplayIndicators()
   static Status prevStatus;
 
   int textSize = 2;
-  int y = tft.height() - 16;
+  int y = tft.height() - 21;
 
   if (prevStatus.wifi != status.wifi || firstEntry)
   {
     prevStatus.wifi = status.wifi;
-    printIndicator(0, y, textSize, "WiFi", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(5, y, textSize, "WiFi", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.www != status.www || firstEntry)
   {
     prevStatus.www = status.www;
-    printIndicator(60, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(65, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.api != status.api || firstEntry)
   {
     prevStatus.api = status.api;
-    printIndicator(110, y, textSize, "API", ST77XX_BLACK, status.api ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(120, y, textSize, "API", ST77XX_BLACK, status.api ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.fetch != status.fetch || firstEntry)
   {
     prevStatus.fetch = status.fetch;
-    printIndicator(160, y, textSize, "Fetch", ST77XX_BLACK, status.fetch ? ST77XX_BLUE : ST77XX_WHITE);
+    printIndicator(175, y, textSize, "Fetch", ST77XX_BLACK, status.fetch ? ST77XX_BLUE : ST77XX_WHITE);
   }
 
   if (prevStatus.timestamp != status.timestamp || firstEntry)
   {
     prevStatus.timestamp = status.timestamp;
     const char *text = formatEpochToHourMinute(status.timestamp);
-    printIndicator(230, y, textSize, text, ST77XX_BLACK, ST77XX_WHITE);
+    printIndicator(250, y, textSize, text, ST77XX_BLACK, ST77XX_WHITE);
   }
 
   firstEntry = false;
@@ -249,9 +249,14 @@ void displayWifiConnectionTick()
     tft.print("+");
 }
 
-void displayClear()
+void displayNormal()
 {
   tft.fillScreen(ST77XX_BLACK);
+  
+  // Frame.
+  tft.drawRect(0, 0, tft.width(), tft.height(), ST77XX_BLUE);
+  tft.drawFastHLine(0, 45, tft.width(), ST77XX_BLUE);
+  tft.drawFastHLine(0, tft.height() - 26, tft.width(), ST77XX_BLUE);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -288,7 +293,7 @@ void connectWifi()
 
   if (WiFi.status() == WL_CONNECTED)
   {
-    displayClear();
+    displayNormal();
     status.wifi = true;
     Serial.println("[WiFi] Connected");
     Serial.print("[WiFi] IP: ");
@@ -440,13 +445,13 @@ void loop()
 
   checkWifi();
 
-  checkWebConnection();
-
-  processApi();
+  checkWebConnection();  
 
   updateDisplayQuotes();
 
   updateDisplayIndicators();
+
+  processApi();
 
   delay(25);
 }

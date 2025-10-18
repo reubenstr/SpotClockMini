@@ -25,9 +25,9 @@ const std::unordered_map<Element, String> apiEndpoints = {
 };
 
 const std::map<Element, const char *> elementTextMap = {
-  {Element::AU, "Au"},
-  {Element::AG, "Ag"},
-  {Element::PT, "Pt"},
+  {Element::AU, "  Gold  "},
+  {Element::AG, " Silver "},
+  {Element::PT, "Platinum"},
 };
 
 Element nextElement(Element current)
