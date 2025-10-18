@@ -8,6 +8,10 @@
   MCU:
     ESP32-C3 Super Mini: https://forum.arduino.cc/t/esp32-c3-supermini-pinout/1189850
 
+  API:
+    Data provided by swissquote.com while not data rich, API access is free.
+
+
 
   To setup WiFi credentiuals, modify and add the following lines to your .bashrc:
     export SPOTCLOCK_WIFI_SSID="REPLACE_WITH_YOUR_SSID"
@@ -17,6 +21,9 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <unordered_map>
+#include <map>
 #include <time.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
@@ -38,10 +45,18 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 const unsigned long heartbeatDelayMs{500};
 
+const unsigned long qouteCycleTimeMs{1000};
+
 Status status{};
 
-int selectedApiIndex = 1;
-ApiInfo *selectedApi = selectApiByIndex(selectedApiIndex);
+const unsigned long apiFetchRateSeconds{10};
+
+std::map<Element, Quote> quotes = {
+    {Element::AU, {0.0f, 0.0f}},
+    {Element::AG, {0.0f, 0.0f}},
+    {Element::PT, {0.0f, 0.0f}},
+};
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // General
@@ -90,51 +105,8 @@ void initDisplay()
   tft.fillScreen(ST77XX_BLACK);
 }
 
-void updateValues()
+void printIndicator(int x, int y, int size, const char *text, int fgColor, int bgColor)
 {
-  float val1 = 4200.45;
-  float val2 = 150.45;
-  float val3 = 102.57;
-  float val4 = 1.45;
-
-  int screenWidth = tft.width();
-
-  struct ValueDisplay
-  {
-    float value;
-    int y;          // Vertical position
-    uint16_t color; // Text color
-    int textSize;
-  };
-
-  ValueDisplay values[] = {
-      {val1, 0, ST77XX_GREEN, 4},
-      {val2, 40, ST77XX_GREEN, 3},
-      {val3, 80, ST77XX_RED, 4},
-      {val4, 120, ST77XX_GREEN, 3}};
-
-  for (int i = 0; i < 4; i++)
-  {
-    char buf[10];
-    dtostrf(values[i].value, 7, 2, buf);
-    int charWidth = 6 * values[i].textSize;
-    int textPixelWidth = strlen(buf) * charWidth;
-
-    int x = (screenWidth - textPixelWidth) / 2;
-
-    tft.setCursor(x, values[i].y);
-    tft.setTextColor(values[i].color);
-    tft.setTextSize(values[i].textSize);
-    tft.print(buf);
-  }
-}
-
-void updateIndicators()
-{
-  static bool firstEntry{true};
-  static Status prevStatus{};
-
-  int y = tft.height() - 16;
   int padding = 2;
   int textSize = 2;
   int textHeight = 8 * textSize;
@@ -142,69 +114,104 @@ void updateIndicators()
   int h = textHeight + 2 * padding;
 
   tft.setTextSize(textSize);
+
+  const char *label1 = "WiFi";
+  int w1 = strlen(text) * 6 * textSize + 2 * padding;
+  tft.fillRoundRect(x, y - padding, w1, h, radius, bgColor);
+  tft.setCursor(x + padding, y);
+  tft.setTextColor(fgColor);
+  tft.print(text);
+}
+
+void updateDisplayElement(const char *text)
+{
+}
+
+void updateDisplayQuotes()
+{
+  static unsigned long start{0};
+  static Element element{Element::AG};
+
+  if (millis() - start > qouteCycleTimeMs)
+  {
+    start = millis();
+
+    element = nextElement(element);
+
+    int textSize = 2;
+    int w = strlen(elementTextMap.at(element)) * 6 * textSize;
+    tft.setTextSize(4);
+    tft.setCursor(tft.width() / 2 - w, 10);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.print(elementTextMap.at(element));
+
+    char buf[10];
+    int charWidth, textPixelWidth;
+
+    float price = quotes[element].currentPrice;
+    float delta = quotes[element].yesterdayClose;
+
+    int qouteColor = ST77XX_GREEN;
+    int deltaColor = ST77XX_RED;
+
+    int largeTextSize = 6;
+    int smallTextSize = 3;
+
+    dtostrf(price, 7, 2, buf);
+    charWidth = 6 * largeTextSize;
+    textPixelWidth = strlen(buf) * charWidth;
+    tft.setCursor((tft.width() - textPixelWidth) / 2, 60);
+    tft.setTextColor(qouteColor);
+    tft.setTextSize(largeTextSize);
+    tft.print(buf);
+
+    dtostrf(delta, 7, 2, buf);
+    charWidth = 6 * smallTextSize;
+    textPixelWidth = strlen(buf) * charWidth;
+    tft.setCursor((tft.width() - textPixelWidth) / 2, 110);
+    tft.setTextColor(deltaColor);
+    tft.setTextSize(smallTextSize);
+    tft.print(buf);
+  }
+}
+
+void updateDisplayIndicators()
+{
+  static bool firstEntry{true};
+  static Status prevStatus;
+
+  int textSize = 2;
+  int y = tft.height() - 16;
+
   if (prevStatus.wifi != status.wifi || firstEntry)
   {
     prevStatus.wifi = status.wifi;
-
-    const char *label1 = "WiFi";
-    int x1 = 0;
-    int w1 = strlen(label1) * 6 * textSize + 2 * padding;
-    tft.fillRoundRect(x1, y - padding, w1, h, radius, status.wifi ? ST77XX_GREEN : ST77XX_RED);
-    tft.setCursor(x1 + padding, y);
-    tft.setTextColor(ST77XX_BLACK);
-    tft.print(label1);
+    printIndicator(0, y, textSize, "WiFi", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.www != status.www || firstEntry)
   {
     prevStatus.www = status.www;
-
-    const char *label2 = "WWW";
-    int x2 = 60;
-    int w2 = strlen(label2) * 6 * textSize + 2 * padding;
-    tft.fillRoundRect(x2, y - padding, w2, h, radius, status.www ? ST77XX_GREEN : ST77XX_RED);
-    tft.setCursor(x2 + padding, y);
-    tft.setTextColor(ST77XX_BLACK);
-    tft.print(label2);
+    printIndicator(60, y, textSize, "WWW", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.api != status.api || firstEntry)
   {
     prevStatus.api = status.api;
-
-    const char *label3 = "API";
-    int x3 = 110;
-    int w3 = strlen(label3) * 6 * textSize + 2 * padding;
-    tft.fillRoundRect(x3, y - padding, w3, h, radius, status.api ? ST77XX_GREEN : ST77XX_RED);
-    tft.setCursor(x3 + padding, y);
-    tft.setTextColor(ST77XX_BLACK);
-    tft.print(label3);
+    printIndicator(110, y, textSize, "API", ST77XX_BLACK, status.wifi ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.fetch != status.fetch || firstEntry)
   {
     prevStatus.fetch = status.fetch;
-
-    const char *label4 = "FETCH";
-    int x4 = 160;
-    int w4 = strlen(label4) * 6 * textSize + 2 * padding;
-    tft.fillRoundRect(x4, y - padding, w4, h, radius, status.fetch ? ST77XX_BLUE : ST77XX_WHITE);
-    tft.setCursor(x4 + padding, y);
-    tft.setTextColor(ST77XX_BLACK);
-    tft.print(label4);
+    printIndicator(160, y, textSize, "Fetch", ST77XX_BLACK, status.wifi ? ST77XX_WHITE : ST77XX_BLUE);
   }
 
   if (prevStatus.timestamp != status.timestamp || firstEntry)
   {
     prevStatus.timestamp = status.timestamp;
-
-    const char *label5 = formatEpochToHourMinute(status.timestamp);
-    int x5 = 230;
-    int w5 = strlen(label5) * 6 * textSize + 2 * padding;
-    tft.fillRoundRect(x5, y - padding, w5, h, radius, ST77XX_WHITE);
-    tft.setCursor(x5 + padding, y);
-    tft.setTextColor(ST77XX_BLACK);
-    tft.print(label5);
+    const char *text = formatEpochToHourMinute(status.timestamp);
+    printIndicator(230, y, textSize, text, ST77XX_BLACK, ST77XX_WHITE);
   }
 
   firstEntry = false;
@@ -246,8 +253,9 @@ void displayWifiConnectionTick()
     tft.print("+");
 }
 
-void displayClear() {
-    tft.fillScreen(ST77XX_BLACK);
+void displayClear()
+{
+  tft.fillScreen(ST77XX_BLACK);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -272,11 +280,11 @@ void connectWifi()
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED)
   {
-    //if (millis() - start > connectionTimeoutMs)
+    // if (millis() - start > connectionTimeoutMs)
     //{
-    //  Serial.println("[WiFi] Failed to connect (timeout).");
-    //  break;
-    //}
+    //   Serial.println("[WiFi] Failed to connect (timeout).");
+    //   break;
+    // }
     Serial.print(".");
     displayWifiConnectionTick();
     delay(500);
@@ -312,6 +320,61 @@ void checkWifi()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// API Methods
+///////////////////////////////////////////////////////////////////////////////
+
+void fetchData()
+{
+  HTTPClient http;
+  String url;
+
+  for (int i = 0; i < static_cast<int>(Element::COUNT); ++i)
+  {
+    Element element = static_cast<Element>(i);
+
+    Serial.printf("[Api] Fetching quote for %s", elementTextMap.at(element));
+
+    http.begin(apiEndpoints.at(element));
+    int httpCode = http.GET();
+
+    if (httpCode > 0)
+    {
+      Serial.printf("[ApiClient] Response code: %d\n", httpCode);
+      String payload = http.getString();
+
+      //  quotes[Element::AU] = {2365.42f, 2350.10f};
+    }
+    else
+    {
+      Serial.printf("[ApiClient] Request failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+
+    http.end();
+  }
+}
+
+void processApi()
+{
+  static unsigned long start{millis()};
+
+  if (millis() - start > apiFetchRateSeconds)
+  {
+    start = millis();
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+      status.fetch = true;
+      updateDisplayIndicators();
+
+      fetchData();
+
+      status.fetch = false;
+      updateDisplayIndicators();
+    }
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // Setup
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -328,24 +391,9 @@ void setup()
 
   Serial.println("SpotClock Mini Startup");
 
-  initDisplay();  
+  initDisplay();
 
-  connectWifi();
-
-  if (selectedApi)
-  {
-    Serial.println("Selected API:");
-    Serial.print("Name: ");
-    Serial.println(selectedApi->name);
-    Serial.print("URL: ");
-    Serial.println(selectedApi->url);
-    Serial.print("Rate: ");
-    Serial.println(selectedApi->rateLimit);
-  }
-  else
-  {
-    Serial.println("Invalid API index!");
-  }
+  // connectWifi();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -356,11 +404,13 @@ void loop()
 {
   heartbeat();
 
-  checkWifi();
+  // checkWifi();
 
-  updateValues();
+  processApi();
 
-  updateIndicators();
+  updateDisplayQuotes();
+
+  updateDisplayIndicators();
 
   delay(10);
 }
