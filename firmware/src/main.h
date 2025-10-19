@@ -1,13 +1,17 @@
 
-struct Quote {
-    float currentPrice;
-    float yesterdayClose;
+struct Quote
+{
+  float currentPrice;
+  float yesterdayClose;
+  int lastTriggerDay;
+  unsigned long timestamp;
 };
 
-struct Quotes {
-    Quote au; 
-    Quote ag; 
-    Quote pt;    
+struct Quotes
+{
+  Quote au;
+  Quote ag;
+  Quote pt;
 };
 
 enum class Element
@@ -25,9 +29,9 @@ const std::unordered_map<Element, String> apiEndpoints = {
 };
 
 const std::map<Element, const char *> elementTextMap = {
-  {Element::AU, "  Gold  "},
-  {Element::AG, " Silver "},
-  {Element::PT, "Platinum"},
+    {Element::AU, "  Gold  "},
+    {Element::AG, " Silver "},
+    {Element::PT, "Platinum"},
 };
 
 Element nextElement(Element current)
@@ -36,18 +40,20 @@ Element nextElement(Element current)
   return static_cast<Element>(next);
 }
 
-struct Status {
-    bool wifi;
-    bool www;
-    bool api;
-    bool fetch;
-    unsigned long timestamp;    
+struct Status
+{
+  bool wifi;
+  bool www;
+  bool api;
+  bool fetch;
 };
 
+struct ApiStatus
+{
+  unsigned long lastUpdateTimestamp;
+};
 
-
-
-const char* rootCACert = R"EOF(
+const char *rootCACert = R"EOF(
 -----BEGIN CERTIFICATE-----
 MIIEsDCCA5igAwIBAgIQd70OB0LV2enQSdd00CpvmjANBgkqhkiG9w0BAQsFADBM
 MSAwHgYDVQQLExdHbG9iYWxTaWduIFJvb3QgQ0EgLSBSMzETMBEGA1UEChMKR2xv

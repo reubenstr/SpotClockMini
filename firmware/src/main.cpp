@@ -7,19 +7,20 @@
 
   MCU:
     ESP32-C3 Super Mini: https://forum.arduino.cc/t/esp32-c3-supermini-pinout/1189850
+    Note: The antenna on this module is poorly designed and needs modification - or just use another ESP32
 
   API:
     Data provided by swissquote.com while not data rich, API access is free.
 
-
-
-  To setup WiFi credentiuals, modify and add the following lines to your .bashrc:
-    export SPOTCLOCK_WIFI_SSID="REPLACE_WITH_YOUR_SSID"
-    export SPOTCLOCK_WIFI_PASS="REPLACE_WITH_YOUR_PASSWORD"
+  WiFi:
+    Add the following lines to your .bashrc:
+      export SPOTCLOCK_WIFI_SSID="<REPLACE_WITH_YOUR_SSID>"
+      export SPOTCLOCK_WIFI_PASS="<REPLACE_WITH_YOUR_PASSWORD>"
 
   */
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -45,18 +46,22 @@
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 const unsigned long connectionTimeoutMs{30000};
-const unsigned long heartbeatDelayMs{500};
-const unsigned long qouteCycleTimeMs{1000};
-const unsigned long apiFetchRateMs{10000};
-const unsigned long pingRateMs{5000};
+const unsigned long heartbeatRateMs{100};
+const unsigned long qouteCycleTimeMs{2000};
+const unsigned long apiFetchRateMs{15000};
+const unsigned long pingRateMs{15000};
 
 Status status{};
 
 std::map<Element, Quote> quotes = {
-    {Element::AU, {0.0f, 0.0f}},
-    {Element::AG, {0.0f, 0.0f}},
-    {Element::PT, {0.0f, 0.0f}},
+    {Element::AU, {0.0f, 0.0f, 0, 0}},
+    {Element::AG, {0.0f, 0.0f, 0, 0}},
+    {Element::PT, {0.0f, 0.0f, 0, 0}},
 };
+
+// NTP for RTC updates; set EST
+const char *tz = "EST5EDT,M3.2.0/2,M11.1.0/2";
+const char *ntpServer = "pool.ntp.org";
 
 ///////////////////////////////////////////////////////////////////////////////
 // General
@@ -67,29 +72,40 @@ void heartbeat()
   static unsigned long start = 0;
   static bool state{false};
 
-  if (millis() - start > heartbeatDelayMs)
+  if (millis() - start > heartbeatRateMs)
   {
     start = millis();
     state = !state;
-    digitalWrite(BUILTIN_LED, state);
+    digitalWrite(PIN_NEOPIXEL, state);
   }
 }
 
-const char *formatEpochToHourMinute(unsigned long epoch)
+bool checkForDailyOpen(Quote &quote, unsigned long timestamp)
 {
-  static char timeString[6];
-  time_t rawtime = (time_t)epoch;
-  struct tm *timeinfo = localtime(&rawtime);
+  time_t ts = static_cast<time_t>(timestamp);
 
-  if (timeinfo)
+  struct tm t;
+  gmtime_r(&ts, &t);
+
+  int utcHour = t.tm_hour;
+  int utcYday = t.tm_yday;
+
+  // 6:00 AM EST = 11:00 UTC (no DST)
+  // const int triggerUTC_HOUR = 11;
+  const int triggerUTC_HOUR = 18; /// TEMP TEST
+
+  if (utcYday == quote.lastTriggerDay)
+    return false;
+
+  if (utcHour >= triggerUTC_HOUR)
   {
-    snprintf(timeString, sizeof(timeString), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
-    return timeString;
+    quote.lastTriggerDay = utcYday;
+    quote.yesterdayClose = quote.currentPrice;
+    return true;
   }
-  else
-  {
-    return "00:00";
-  }
+
+  quote.timestamp = timestamp;
+  return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -127,6 +143,8 @@ void updateDisplayQuotes()
 {
   static unsigned long start{0};
   static Element element{Element::AG};
+  char buf[24];
+  int charWidth, textPixelWidth;
 
   if (millis() - start > qouteCycleTimeMs)
   {
@@ -141,14 +159,10 @@ void updateDisplayQuotes()
     tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     tft.print(elementTextMap.at(element));
 
-    char buf[10];
-    int charWidth, textPixelWidth;
-
     float price = quotes[element].currentPrice;
-    float delta = quotes[element].yesterdayClose;
-
-    int qouteColor = ST77XX_GREEN;
-    int deltaColor = ST77XX_RED;
+    float delta = quotes[element].currentPrice - quotes[element].yesterdayClose;
+    int color = quotes[element].yesterdayClose == 0 ? ST77XX_WHITE : delta < 0 ? ST77XX_RED
+                                                                               : ST77XX_GREEN;
 
     int largeTextSize = 6;
     int smallTextSize = 3;
@@ -156,18 +170,21 @@ void updateDisplayQuotes()
     dtostrf(price, 7, 2, buf);
     charWidth = 6 * largeTextSize;
     textPixelWidth = strlen(buf) * charWidth;
-    tft.setCursor((tft.width() - textPixelWidth) / 2, 60);
-    tft.setTextColor(qouteColor);
+    tft.setCursor((tft.width() - textPixelWidth) / 2, 57);
+    tft.setTextColor(color, ST77XX_BLACK);
     tft.setTextSize(largeTextSize);
     tft.print(buf);
 
-    dtostrf(delta, 7, 2, buf);
-    charWidth = 6 * smallTextSize;
-    textPixelWidth = strlen(buf) * charWidth;
-    tft.setCursor((tft.width() - textPixelWidth) / 2, 110);
-    tft.setTextColor(deltaColor);
-    tft.setTextSize(smallTextSize);
-    tft.print(buf);
+    if (quotes[element].yesterdayClose != 0)
+    {
+      dtostrf(delta, 7, 2, buf);
+      charWidth = 6 * smallTextSize;
+      textPixelWidth = strlen(buf) * charWidth;
+      tft.setCursor((tft.width() - textPixelWidth) / 2, 108);
+      tft.setTextColor(color, ST77XX_BLACK);
+      tft.setTextSize(smallTextSize);
+      tft.print(buf);
+    }
   }
 }
 
@@ -175,9 +192,10 @@ void updateDisplayIndicators()
 {
   static bool firstEntry{true};
   static Status prevStatus;
+  static unsigned long lastDisplayedMinute = 999;
 
   int textSize = 2;
-  int y = tft.height() - 21;
+  int y = tft.height() - 22;
 
   if (prevStatus.wifi != status.wifi || firstEntry)
   {
@@ -203,11 +221,18 @@ void updateDisplayIndicators()
     printIndicator(175, y, textSize, "Fetch", ST77XX_BLACK, status.fetch ? ST77XX_BLUE : ST77XX_WHITE);
   }
 
-  if (prevStatus.timestamp != status.timestamp || firstEntry)
+  time_t now;
+  time(&now);
+  struct tm *timeinfo = localtime(&now);
+  if (timeinfo)
   {
-    prevStatus.timestamp = status.timestamp;
-    const char *text = formatEpochToHourMinute(status.timestamp);
-    printIndicator(250, y, textSize, text, ST77XX_BLACK, ST77XX_WHITE);
+    if (timeinfo->tm_min != lastDisplayedMinute)
+    {
+      lastDisplayedMinute = timeinfo->tm_min;
+      static char timeString[6];
+      snprintf(timeString, sizeof(timeString), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
+      printIndicator(250, y, textSize, timeString, ST77XX_BLACK, ST77XX_WHITE);
+    }
   }
 
   firstEntry = false;
@@ -252,11 +277,11 @@ void displayWifiConnectionTick()
 void displayNormal()
 {
   tft.fillScreen(ST77XX_BLACK);
-  
+
   // Frame.
   tft.drawRect(0, 0, tft.width(), tft.height(), ST77XX_BLUE);
   tft.drawFastHLine(0, 45, tft.width(), ST77XX_BLUE);
-  tft.drawFastHLine(0, tft.height() - 26, tft.width(), ST77XX_BLUE);
+  tft.drawFastHLine(0, tft.height() - 28, tft.width(), ST77XX_BLUE);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -345,8 +370,40 @@ void fetchData(Element element)
         status.api = true;
 
         String payload = https.getString();
-        Serial.println("Response:");
+        Serial.println("[API] Response:");
         Serial.println(payload);
+
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error)
+        {
+          status.api = false;
+          Serial.print("[API] Error, deserializeJson() failed: ");
+          Serial.println(error.f_str());
+          return;
+        }
+
+        JsonVariant ts = doc[0]["ts"];
+        if (ts.isNull())
+        {
+          Serial.println("[API] Error, 'Bid' is null or missing.");
+        }
+        else
+        {
+          float timestamp = ts.as<float>();
+          checkForDailyOpen(quotes.at(element), timestamp);
+        }
+
+        JsonVariant bidValue = doc[0]["spreadProfilePrices"][0]["bid"];
+        if (bidValue.isNull())
+        {
+          Serial.println("[API] Error, 'Bid' is null or missing.");
+        }
+        else
+        {
+          float bid = bidValue.as<float>();
+          quotes.at(element).currentPrice = bid;
+        }
       }
       else
       {
@@ -356,7 +413,7 @@ void fetchData(Element element)
     }
     else
     {
-      Serial.printf("[API] GET failed, error: %s\n", https.errorToString(httpCode).c_str());
+      Serial.printf("[API] Error, GET failed: %s\n", https.errorToString(httpCode).c_str());
       status.api = false;
     }
 
@@ -369,15 +426,14 @@ void fetchData(Element element)
   }
 }
 
-void processApi()
+void apiFetchTask(void *pvParameters)
 {
-  static unsigned long start{0};
-  static Element element{Element::AU};
+  static Element element = Element::AU;
 
-  if (millis() - start > apiFetchRateMs)
+  const TickType_t delayTicks = pdMS_TO_TICKS(apiFetchRateMs);
+
+  for (;;)
   {
-    start = millis();
-
     if (WiFi.status() == WL_CONNECTED)
     {
       element = nextElement(element);
@@ -390,6 +446,14 @@ void processApi()
       status.fetch = false;
       updateDisplayIndicators();
     }
+    else
+    {
+      // Optionally, update status if WiFi is disconnected
+      status.fetch = false;
+      updateDisplayIndicators();
+    }
+
+    vTaskDelay(delayTicks);
   }
 }
 
@@ -397,15 +461,12 @@ void processApi()
 // Ping
 ///////////////////////////////////////////////////////////////////////////////
 
-void checkWebConnection()
+void webConnectionTask(void *pvParameters)
 {
+  const TickType_t delayTicks = pdMS_TO_TICKS(pingRateMs);
 
-  static unsigned long start{0};
-
-  if (millis() - start > pingRateMs)
+  for (;;)
   {
-    start = millis();
-
     if (Ping.ping("www.google.com"))
     {
       status.www = true;
@@ -414,6 +475,8 @@ void checkWebConnection()
     {
       status.www = false;
     }
+
+    vTaskDelay(delayTicks);
   }
 }
 
@@ -423,7 +486,7 @@ void checkWebConnection()
 
 void setup()
 {
-  pinMode(BUILTIN_LED, OUTPUT);
+  pinMode(PIN_NEOPIXEL, OUTPUT);
 
   delay(2000);
   Serial.begin(115200);
@@ -433,6 +496,11 @@ void setup()
   initDisplay();
 
   connectWifi();
+
+  configTzTime(tz, ntpServer);
+
+  xTaskCreate(webConnectionTask, "Ping", 2048, NULL, 1, NULL);
+  xTaskCreate(apiFetchTask, "Api", 8192, NULL, 1, NULL);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -445,13 +513,9 @@ void loop()
 
   checkWifi();
 
-  checkWebConnection();  
-
   updateDisplayQuotes();
 
   updateDisplayIndicators();
-
-  processApi();
 
   delay(25);
 }
