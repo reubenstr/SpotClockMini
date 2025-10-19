@@ -33,10 +33,10 @@
 #include "main.h"
 
 #ifndef SPOTCLOCK_WIFI_SSID
-#error "WIFI_SSID is not defined. Set env var or pass -D WIFI_SSID=... to PlatformIO."
+#error "SPOTCLOCK_WIFI_SSID is not defined."
 #endif
 #ifndef SPOTCLOCK_WIFI_PASS
-#error "WIFI_PASS is not defined. Set env var or pass -D WIFI_PASS=... to PlatformIO."
+#error "SPOTCLOCK_WIFI_PASS is not defined."
 #endif
 
 #define TFT_CS 0
@@ -61,6 +61,16 @@ std::map<Element, Quote> quotes = {
 // NTP for RTC updates; set EST
 const char *tz = "EST5EDT,M3.2.0/2,M11.1.0/2";
 const char *ntpServer = "pool.ntp.org";
+
+// Backlight brightness control:
+const int pwmPin = 3;
+const int pwmChannel = 0;
+const int pwmFrequency = 5000;
+const int pwmResolution = 8;
+const int pwmFullBrightnessDuty = 255;
+const int pwmDimBrightnessDuty = 20;
+const int dimStartHour = 21;
+const int dimEndHour = 7;
 
 ///////////////////////////////////////////////////////////////////////////////
 // General
@@ -90,8 +100,7 @@ bool checkForDailyOpen(Quote &quote, unsigned long timestamp)
   int utcYday = t.tm_yday;
 
   // 6:00 AM EST = 11:00 UTC (no DST)
-  // const int triggerUTC_HOUR = 11;
-  const int triggerUTC_HOUR = 18; /// TEMP TEST
+  const int triggerUTC_HOUR = 11;
 
   // TEMP
   Serial.println(triggerUTC_HOUR);
@@ -120,6 +129,10 @@ bool checkForDailyOpen(Quote &quote, unsigned long timestamp)
 
 void initDisplay()
 {
+  ledcSetup(pwmChannel, pwmFrequency, pwmResolution);
+  ledcAttachPin(pwmPin, pwmChannel);
+  ledcWrite(pwmChannel, pwmFullBrightnessDuty);
+
   tft.init(170, 320);
   delay(250);
   tft.setRotation(3);
@@ -212,7 +225,7 @@ void updateDisplayIndicators()
   if (prevStatus.www != status.www || firstEntry)
   {
     prevStatus.www = status.www;
-    printIndicator(65, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(68, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.api != status.api || firstEntry)
@@ -288,6 +301,24 @@ void displayNormal()
   tft.drawRect(0, 0, tft.width(), tft.height(), ST77XX_BLUE);
   tft.drawFastHLine(0, 45, tft.width(), ST77XX_BLUE);
   tft.drawFastHLine(0, tft.height() - 28, tft.width(), ST77XX_BLUE);
+}
+
+void updateDisplayBrightness()
+{
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+    return;
+
+  int hour = timeinfo.tm_hour;
+
+  if (hour >= dimStartHour || hour < dimEndHour)
+  {
+    ledcWrite(pwmChannel, pwmDimBrightnessDuty);
+  }
+  else
+  {
+    ledcWrite(pwmChannel, pwmFullBrightnessDuty);    
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -438,19 +469,19 @@ void apiFetchTask(void *pvParameters)
 
   const TickType_t delayTicks = pdMS_TO_TICKS(apiFetchRateMs);
 
-  while(true)
+  while (true)
   {
     if (WiFi.status() == WL_CONNECTED)
     {
       element = nextElement(element);
-      
-      status.fetch = true;   
+
+      status.fetch = true;
       fetchData(element);
-      status.fetch = false;    
+      status.fetch = false;
     }
     else
     {
-      status.fetch = false;     
+      status.fetch = false;
     }
 
     vTaskDelay(delayTicks);
@@ -465,7 +496,7 @@ void webConnectionTask(void *pvParameters)
 {
   const TickType_t delayTicks = pdMS_TO_TICKS(pingRateMs);
 
-  while(true)
+  while (true)
   {
     if (Ping.ping("www.google.com"))
     {
@@ -516,6 +547,8 @@ void loop()
   updateDisplayQuotes();
 
   updateDisplayIndicators();
+
+  updateDisplayBrightness();
 
   delay(25);
 }
