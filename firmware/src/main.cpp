@@ -10,13 +10,12 @@
     Note: The antenna on this module is poorly designed and needs modification - or just use another ESP32
 
   API:
-    Data provided by swissquote.com while not data rich, API access is free.
+    Data provided by swissquote.com while not data rich, API access is free and does not require a key.
 
   WiFi:
     Add the following lines to your .bashrc:
       export SPOTCLOCK_WIFI_SSID="<REPLACE_WITH_YOUR_SSID>"
       export SPOTCLOCK_WIFI_PASS="<REPLACE_WITH_YOUR_PASSWORD>"
-
   */
 
 #include <Arduino.h>
@@ -46,7 +45,7 @@
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 const unsigned long connectionTimeoutMs{30000};
-const unsigned long heartbeatRateMs{100};
+const unsigned long heartbeatRateMs{250};
 const unsigned long qouteCycleTimeMs{2000};
 const unsigned long apiFetchRateMs{15000};
 const unsigned long pingRateMs{15000};
@@ -93,6 +92,13 @@ bool checkForDailyOpen(Quote &quote, unsigned long timestamp)
   // 6:00 AM EST = 11:00 UTC (no DST)
   // const int triggerUTC_HOUR = 11;
   const int triggerUTC_HOUR = 18; /// TEMP TEST
+
+  // TEMP
+  Serial.println(triggerUTC_HOUR);
+  Serial.println(utcHour);
+  Serial.println(utcYday);
+  Serial.println(quote.lastTriggerDay);
+  Serial.println("------------");
 
   if (utcYday == quote.lastTriggerDay)
     return false;
@@ -177,7 +183,7 @@ void updateDisplayQuotes()
 
     if (quotes[element].yesterdayClose != 0)
     {
-      dtostrf(delta, 7, 2, buf);
+      dtostrf(delta, 6, 2, buf);
       charWidth = 6 * smallTextSize;
       textPixelWidth = strlen(buf) * charWidth;
       tft.setCursor((tft.width() - textPixelWidth) / 2, 108);
@@ -432,25 +438,19 @@ void apiFetchTask(void *pvParameters)
 
   const TickType_t delayTicks = pdMS_TO_TICKS(apiFetchRateMs);
 
-  for (;;)
+  while(true)
   {
     if (WiFi.status() == WL_CONNECTED)
     {
       element = nextElement(element);
-
-      status.fetch = true;
-      updateDisplayIndicators();
-
+      
+      status.fetch = true;   
       fetchData(element);
-
-      status.fetch = false;
-      updateDisplayIndicators();
+      status.fetch = false;    
     }
     else
     {
-      // Optionally, update status if WiFi is disconnected
-      status.fetch = false;
-      updateDisplayIndicators();
+      status.fetch = false;     
     }
 
     vTaskDelay(delayTicks);
@@ -465,7 +465,7 @@ void webConnectionTask(void *pvParameters)
 {
   const TickType_t delayTicks = pdMS_TO_TICKS(pingRateMs);
 
-  for (;;)
+  while(true)
   {
     if (Ping.ping("www.google.com"))
     {
