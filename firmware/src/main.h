@@ -4,7 +4,7 @@ struct Quote
   float currentPrice;
   float yesterdayClose;
   int lastTriggerDay;
-  unsigned long timestamp;
+  unsigned long long timestamp;
 };
 
 struct Quotes

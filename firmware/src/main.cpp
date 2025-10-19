@@ -89,9 +89,14 @@ void heartbeat()
   }
 }
 
-bool checkForDailyOpen(Quote &quote, unsigned long timestamp)
+bool checkForDailyOpen(Quote &quote, unsigned long long timestamp)
 {
-  time_t ts = static_cast<time_t>(timestamp);
+   time_t ts;
+    if (timestamp > 2000000000UL)
+      // timestamp in milliseconds
+        ts = static_cast<time_t>(timestamp / 1000UL);
+    else
+        ts = static_cast<time_t>(timestamp);
 
   struct tm t;
   gmtime_r(&ts, &t);
@@ -100,9 +105,10 @@ bool checkForDailyOpen(Quote &quote, unsigned long timestamp)
   int utcYday = t.tm_yday;
 
   // 6:00 AM EST = 11:00 UTC (no DST)
-  const int triggerUTC_HOUR = 11;
+  const int triggerUTC_HOUR = 0;//11; //TEMP
 
   // TEMP
+  Serial.println(timestamp);
   Serial.println(triggerUTC_HOUR);
   Serial.println(utcHour);
   Serial.println(utcYday);
@@ -423,11 +429,11 @@ void fetchData(Element element)
         JsonVariant ts = doc[0]["ts"];
         if (ts.isNull())
         {
-          Serial.println("[API] Error, 'Bid' is null or missing.");
+          Serial.println("[API] Error, 'ts' is null or missing.");
         }
         else
         {
-          float timestamp = ts.as<float>();
+          unsigned long long timestamp = doc[0]["ts"].as<unsigned long long>();
           checkForDailyOpen(quotes.at(element), timestamp);
         }
 
