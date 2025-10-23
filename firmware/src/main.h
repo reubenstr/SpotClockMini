@@ -18,20 +18,26 @@ enum class Element
 {
   AU,
   AG,
-  PT,
+  // PT,
   COUNT
 };
 
 const std::unordered_map<Element, String> apiEndpoints = {
     {Element::AU, "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"},
     {Element::AG, "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAG/USD"},
-    {Element::PT, "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XPT/USD"},
+    // {Element::PT, "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XPT/USD"},
 };
 
 const std::map<Element, const char *> elementTextMap = {
     {Element::AU, "  Gold  "},
     {Element::AG, " Silver "},
-    {Element::PT, "Platinum"},
+    // {Element::PT, "Platinum"},
+};
+
+const std::map<Element, uint16_t> elementColorMap = {
+    {Element::AU, ST77XX_YELLOW},
+    {Element::AG, ST77XX_WHITE},
+    // {Element::PT, ST77XX_WHITE},
 };
 
 Element nextElement(Element current)

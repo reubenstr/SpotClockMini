@@ -16,6 +16,10 @@
     Add the following lines to your .bashrc:
       export SPOTCLOCK_WIFI_SSID="<REPLACE_WITH_YOUR_SSID>"
       export SPOTCLOCK_WIFI_PASS="<REPLACE_WITH_YOUR_PASSWORD>"
+
+  Notes:
+    Some ESP32-C3 Mini boards have poory designed antennas and will need a hardware modification to connect to WiFi reliably.
+    Example: https://hackaday.com/2025/04/07/simple-antenna-makes-for-better-esp32-c3-wifi/    
   */
 
 #include <Arduino.h>
@@ -39,9 +43,9 @@
 #error "SPOTCLOCK_WIFI_PASS is not defined."
 #endif
 
-#define TFT_CS 0
-#define TFT_RST 1
-#define TFT_DC 2
+#define TFT_CS 21
+#define TFT_RST 20
+#define TFT_DC 10
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 const unsigned long connectionTimeoutMs{30000};
@@ -55,7 +59,7 @@ Status status{};
 std::map<Element, Quote> quotes = {
     {Element::AU, {0.0f, 0.0f, 0, 0}},
     {Element::AG, {0.0f, 0.0f, 0, 0}},
-    {Element::PT, {0.0f, 0.0f, 0, 0}},
+    // {Element::PT, {0.0f, 0.0f, 0, 0}},
 };
 
 // NTP for RTC updates; set EST
@@ -68,9 +72,9 @@ const int pwmChannel = 0;
 const int pwmFrequency = 5000;
 const int pwmResolution = 8;
 const int pwmFullBrightnessDuty = 255;
-const int pwmDimBrightnessDuty = 20;
-const int dimStartHour = 21;
-const int dimEndHour = 7;
+const int pwmDimBrightnessDuty = 15;
+const int dimStartHour = 21; // Local time
+const int dimEndHour = 7;   // Local time
 
 ///////////////////////////////////////////////////////////////////////////////
 // General
@@ -105,15 +109,7 @@ bool checkForDailyOpen(Quote &quote, unsigned long long timestamp)
   int utcYday = t.tm_yday;
 
   // 6:00 AM EST = 11:00 UTC (no DST)
-  const int triggerUTC_HOUR = 0;//11; //TEMP
-
-  // TEMP
-  Serial.println(timestamp);
-  Serial.println(triggerUTC_HOUR);
-  Serial.println(utcHour);
-  Serial.println(utcYday);
-  Serial.println(quote.lastTriggerDay);
-  Serial.println("------------");
+  const int triggerUTC_HOUR = 11;
 
   if (utcYday == quote.lastTriggerDay)
     return false;
@@ -181,7 +177,7 @@ void updateDisplayQuotes()
     int w = strlen(elementTextMap.at(element)) * 6 * textSize;
     tft.setTextSize(4);
     tft.setCursor(tft.width() / 2 - w, 10);
-    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    tft.setTextColor(elementColorMap.at(element), ST77XX_BLACK);
     tft.print(elementTextMap.at(element));
 
     float price = quotes[element].currentPrice;
@@ -202,8 +198,8 @@ void updateDisplayQuotes()
 
     if (quotes[element].yesterdayClose != 0)
     {
-      dtostrf(delta, 6, 2, buf);
-      charWidth = 6 * smallTextSize;
+      dtostrf(delta, 7, 2, buf);
+      charWidth = 7 * smallTextSize;
       textPixelWidth = strlen(buf) * charWidth;
       tft.setCursor((tft.width() - textPixelWidth) / 2, 108);
       tft.setTextColor(color, ST77XX_BLACK);
@@ -231,13 +227,13 @@ void updateDisplayIndicators()
   if (prevStatus.www != status.www || firstEntry)
   {
     prevStatus.www = status.www;
-    printIndicator(68, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(69, y, textSize, "WWW", ST77XX_BLACK, status.www ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.api != status.api || firstEntry)
   {
     prevStatus.api = status.api;
-    printIndicator(120, y, textSize, "API", ST77XX_BLACK, status.api ? ST77XX_GREEN : ST77XX_RED);
+    printIndicator(122, y, textSize, "API", ST77XX_BLACK, status.api ? ST77XX_GREEN : ST77XX_RED);
   }
 
   if (prevStatus.fetch != status.fetch || firstEntry)
@@ -256,8 +252,10 @@ void updateDisplayIndicators()
       lastDisplayedMinute = timeinfo->tm_min;
       static char timeString[6];
       snprintf(timeString, sizeof(timeString), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
-      printIndicator(250, y, textSize, timeString, ST77XX_BLACK, ST77XX_WHITE);
-    }
+      printIndicator(250, y, textSize, timeString, ST77XX_BLACK, ST77XX_GREEN);
+    }    
+  } else {
+     printIndicator(250, y, textSize, "00:00", ST77XX_BLACK, ST77XX_RED);
   }
 
   firstEntry = false;
@@ -504,15 +502,7 @@ void webConnectionTask(void *pvParameters)
 
   while (true)
   {
-    if (Ping.ping("www.google.com"))
-    {
-      status.www = true;
-    }
-    else
-    {
-      status.www = false;
-    }
-
+    status.www = Ping.ping("www.google.com");
     vTaskDelay(delayTicks);
   }
 }
